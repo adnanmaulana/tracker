@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tracker test page</title>
+  <!-- Queue stub: lets you call track() before t.js has loaded. -->
+  <script>window.track = window.track || function () { (window.track.q = window.track.q || []).push(arguments) }</script>
+  <script defer src="http://localhost:8080/t.js" data-site="portfolio"></script>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    nav a, button { margin-right: .75rem; }
+  </style>
+</head>
+<body>
+  <h1>Tracker test page</h1>
+  <p>Open DevTools → Network and filter by <code>/e</code>. Events flush after 1s, or when you leave the tab.</p>
+
+  <h2>SPA navigation</h2>
+  <nav>
+    <a href="/" data-nav>Home</a>
+    <a href="/projects" data-nav>Projects</a>
+    <a href="/about?tab=cv" data-nav>About</a>
+  </nav>
+  <p>Current path: <code id="path"></code></p>
+
+  <h2>Events</h2>
+  <button data-track="resume_download" data-track-format="pdf">data-track button</button>
+  <button onclick="track('copy_snippet', { recipe: 'gesture-swipe' })">track() call</button>
+  <a href="https://github.com/" target="_blank" rel="noopener">Outbound link</a>
+
+  <script>
+    const show = () => (document.getElementById("path").textContent = location.pathname + location.search);
+    document.querySelectorAll("[data-nav]").forEach((a) =>
+      a.addEventListener("click", (e) => { e.preventDefault(); history.pushState(null, "", a.getAttribute("href")); show(); })
+    );
+    addEventListener("popstate", show);
+    show();
+  </script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+[Unit]
+Description=Tracker API (Go)
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+User=tracker
+EnvironmentFile=/etc/tracker/api.env
+ExecStart=/srv/tracker/api/tracker-api
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+# Appended to /etc/caddy/Caddyfile by setup.sh.
+tracker.adnanradjam.com {
+	encode zstd gzip
+	@api path /e /t.js /healthz
+	handle @api {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3002
+	}
+}

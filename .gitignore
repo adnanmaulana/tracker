@@ -1,0 +1,12 @@
+.DS_Store
+node_modules/
+.next/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+# api/static/t.js is committed on purpose: the Go binary embeds it.
+/api/bin/
+/api/.devdb/
+/deploy/.secrets
+/dist/
