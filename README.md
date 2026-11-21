@@ -1,6 +1,6 @@
 # monitoring-tools
 
-Self-hosted, cookie-free event tracking for my personal sites (portfolio, Reanimated Cookbook, and future projects).
+Self-hosted, cookie-free event tracking for my personal sites (portfolio, Reanimated Cookbook, Quran Repeater, and future projects).
 
 **Stack:** Go API · Postgres · Next.js dashboard
 
@@ -34,7 +34,7 @@ Requires Docker (Postgres 16+), Go 1.26+ and Node 20+.
 
 ```bash
 make up       # build tracker, start Postgres + API on :8080 (migrations run automatically)
-make seed     # add dev sites: portfolio, reanimated-cookbook
+make seed     # add dev sites: portfolio, reanimated-cookbook, quran-repeater
 make example  # tracker test page on http://localhost:3000, click around
 make events   # or send sample events with curl
 make psql     # then: SELECT name, path, device, props FROM events;
