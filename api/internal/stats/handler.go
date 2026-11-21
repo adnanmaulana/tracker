@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -17,8 +18,10 @@ import (
 type Querier interface {
 	Totals(ctx context.Context, site string, r Range) (map[string]Period, error)
 	Series(ctx context.Context, site, event string, r Range) (map[string][]Point, error)
-	Top(ctx context.Context, site, dim, event string, r Range, limit int) ([]TopRow, error)
+	Top(ctx context.Context, site, dim, event string, r Range, limit int, byVisitors bool) ([]TopRow, error)
 	Events(ctx context.Context, site, name string, before *Cursor, limit int) ([]EventRow, error)
+	Visitors(ctx context.Context, site string, r Range, limit, offset int) ([]VisitorRow, error)
+	Visitor(ctx context.Context, site, id string, limit int) (*VisitorRow, []EventRow, error)
 }
 
 // Registry is the site catalogue (implemented by *sites.Store).
@@ -45,6 +48,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sites/{site}/stats/timeseries", h.forSite(true, h.timeseries))
 	mux.HandleFunc("GET /api/sites/{site}/stats/top", h.forSite(true, h.top))
 	mux.HandleFunc("GET /api/sites/{site}/events", h.forSite(false, h.events))
+	// Per-visitor data is never public, even for is_public sites.
+	mux.HandleFunc("GET /api/sites/{site}/visitors", h.forSite(false, h.visitors))
+	mux.HandleFunc("GET /api/sites/{site}/visitors/{visitor}", h.forSite(false, h.visitor))
 }
 
 // ---- auth ----
@@ -225,15 +231,24 @@ func (h *Handler) top(w http.ResponseWriter, r *http.Request, site sites.Site) {
 		dim = "path"
 	}
 	if !ValidDimension(dim) {
-		writeError(w, http.StatusBadRequest, "invalid dim: use path, referrer, utm_source, utm_medium, utm_campaign, country, device, browser, os, event or prop:<key>")
+		writeError(w, http.StatusBadRequest, "invalid dim: use path, referrer, utm_source, utm_medium, utm_campaign, country, city, device, browser, os, event or prop:<key>")
 		return
 	}
 	limit, ok := intParam(w, r, "limit", 10, 100)
 	if !ok {
 		return
 	}
+	var byVisitors bool
+	switch r.URL.Query().Get("sort") {
+	case "", "events":
+	case "visitors":
+		byVisitors = true
+	default:
+		writeError(w, http.StatusBadRequest, "invalid sort: use events or visitors")
+		return
+	}
 	event := eventParam(r, DefaultEvent(dim))
-	rows, err := h.Store.Top(r.Context(), site.ID, dim, event, rng, limit)
+	rows, err := h.Store.Top(r.Context(), site.ID, dim, event, rng, limit, byVisitors)
 	if err != nil {
 		h.serverError(w, err)
 		return
@@ -263,6 +278,51 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request, site sites.Site
 		next = &c
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": rows, "next": next})
+}
+
+var visitorIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+func (h *Handler) visitors(w http.ResponseWriter, r *http.Request, site sites.Site) {
+	rng, ok := h.parseRange(w, r)
+	if !ok {
+		return
+	}
+	limit, ok := intParam(w, r, "limit", 50, 200)
+	if !ok {
+		return
+	}
+	page, ok := intParam(w, r, "page", 1, 10_000)
+	if !ok {
+		return
+	}
+	// Fetch one extra row to know whether there is a next page.
+	rows, err := h.Store.Visitors(r.Context(), site.ID, rng, limit+1, (page-1)*limit)
+	if err != nil {
+		h.serverError(w, err)
+		return
+	}
+	more := len(rows) > limit
+	if more {
+		rows = rows[:limit]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"range": toJSON(rng), "visitors": rows, "page": page, "has_more": more})
+}
+
+func (h *Handler) visitor(w http.ResponseWriter, r *http.Request, site sites.Site) {
+	id := r.PathValue("visitor")
+	if !visitorIDRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, "invalid visitor id")
+		return
+	}
+	v, events, err := h.Store.Visitor(r.Context(), site.ID, id, 1000)
+	switch {
+	case err != nil:
+		h.serverError(w, err)
+	case v == nil:
+		writeError(w, http.StatusNotFound, "visitor not found")
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"visitor": v, "events": events, "truncated": len(events) == 1000})
+	}
 }
 
 // ---- helpers ----

@@ -14,7 +14,7 @@ import (
 
 var columns = []string{
 	"site_id", "name", "ts", "session_id", "visitor_id", "path", "referrer",
-	"utm_source", "utm_medium", "utm_campaign", "country", "device", "browser", "os", "props",
+	"utm_source", "utm_medium", "utm_campaign", "country", "region", "city", "device", "browser", "os", "props",
 }
 
 type Buffer struct {
@@ -104,7 +104,7 @@ func (b *Buffer) write(ctx context.Context, batch []event.Event) error {
 			return []any{
 				e.SiteID, e.Name, e.TS, e.SessionID, e.VisitorID,
 				null(e.Path), null(e.Referrer), null(e.UTMSource), null(e.UTMMedium), null(e.UTMCampaign),
-				null(e.Country), null(e.Device), null(e.Browser), null(e.OS), string(e.Props),
+				null(e.Country), null(e.Region), null(e.City), null(e.Device), null(e.Browser), null(e.OS), string(e.Props),
 			}, nil
 		}))
 	return err

@@ -161,6 +161,7 @@ Runs on the same VPS as the sites (Ubuntu 24.04), next to them behind Caddy:
 | Dashboard | `tracker-web.service`, `127.0.0.1:3002`, releases in `/srv/tracker/web/releases` |
 | Postgres 16 | local, database and role `tracker`; daily `pg_dump` to `/var/backups/tracker` (14 days kept) |
 | Secrets | `/etc/tracker/api.env`, `/etc/tracker/web.env` (generated once by `setup.sh`) |
+| GeoIP | DB-IP City Lite at `/var/lib/tracker/dbip-city-lite.mmdb`, refreshed monthly by `tracker-geoip-update` (cron) |
 | Caddy | `tracker.adnanradjam.com`: `/e`, `/t.js`, `/healthz` go to the API, everything else to the dashboard |
 
 ```sh
@@ -169,6 +170,13 @@ ssh adnan@103.193.179.175 'sudo bash -s' < deploy/setup.sh   # once: Postgres, u
 ```
 
 The dashboard password is in `/etc/tracker/web.env` (`DASHBOARD_PASSWORD`). New sites: add a row to `sites` (see `api/scripts/seed-dev.sql`) or `POST /api/sites`.
+
+## Visitors and location
+Each site page shows recent visitors, with a full **Visitors** page and a per-visitor timeline grouped into visits. Visitors stay anonymous:
+- no cookies and no stored IPs; the IP is used once for a daily-rotating visitor hash and a local GeoIP lookup, then dropped;
+- only country, region and city are kept (set `GEOIP_DB`; without it location is blank unless an edge proxy sends a country header);
+- a visitor ID resets daily, so a returning person appears as a new visitor each day;
+- per-visitor endpoints (`/api/sites/{site}/visitors[/{id}]`) always need the API token, even for public sites.
 
 ## Config
 See [`api/.env.example`](api/.env.example). `HOST` sets the bind address (production uses `127.0.0.1`).

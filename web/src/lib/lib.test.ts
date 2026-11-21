@@ -1,6 +1,17 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { countryFlag, delta, formatBucket, formatNumber } from "./format";
+import {
+  countryFlag,
+  delta,
+  eventLabel,
+  formatAgo,
+  formatBucket,
+  formatDuration,
+  formatNumber,
+  formatTime,
+  placeLabel,
+  referrerHost,
+} from "./format";
 import { parseRange } from "./range";
 import { labelIndices, niceTicks } from "./scale";
 import { createSessionToken, safeNext, SESSION_MAX_AGE, verifySessionToken } from "./session";
@@ -80,5 +91,37 @@ describe("session", () => {
     expect(safeNext("//evil.com")).toBe("/");
     expect(safeNext("https://evil.com")).toBe("/");
     expect(safeNext(null)).toBe("/");
+  });
+});
+
+describe("visitor formatting", () => {
+  const now = new Date("2026-11-21T10:00:00Z"); // 17:00 in Jakarta
+
+  it("formats times relative to today in the dashboard zone", () => {
+    expect(formatTime("2026-11-21T08:30:00Z", "Asia/Jakarta", now)).toBe("15:30");
+    expect(formatTime("2026-11-19T08:30:00Z", "Asia/Jakarta", now)).toBe("Thu, 15:30");
+    expect(formatTime("2026-11-01T08:30:00Z", "Asia/Jakarta", now)).toBe("Nov 1, 15:30");
+  });
+
+  it("says how long ago", () => {
+    expect(formatAgo("2026-11-21T09:59:40Z", "UTC", now)).toBe("just now");
+    expect(formatAgo("2026-11-21T09:55:00Z", "UTC", now)).toBe("5 min ago");
+    expect(formatAgo("2026-11-21T07:00:00Z", "UTC", now)).toBe("3 h ago");
+  });
+
+  it("formats durations", () => {
+    expect(formatDuration(20_000)).toBe("under a minute");
+    expect(formatDuration(4 * 60_000)).toBe("4 min");
+    expect(formatDuration(72 * 60_000)).toBe("1 h 12 min");
+  });
+
+  it("labels places, referrers and events", () => {
+    expect(placeLabel({ city: "South Jakarta", region: "Jakarta", country: "ID" })).toBe("South Jakarta, Jakarta");
+    expect(placeLabel({ city: "Singapore", region: "Singapore", country: "SG" })).toBe("Singapore");
+    expect(placeLabel({ country: "ID" })).toBe("Indonesia");
+    expect(placeLabel({})).toBe("Unknown location");
+    expect(referrerHost("https://www.github.com/me")).toBe("github.com");
+    expect(eventLabel("pageview")).toBe("Page view");
+    expect(eventLabel("copy_code")).toBe("Copy code");
   });
 });

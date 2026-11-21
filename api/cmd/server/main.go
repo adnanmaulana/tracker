@@ -15,6 +15,7 @@ import (
 	"monitoring-tools/api/internal/buffer"
 	"monitoring-tools/api/internal/config"
 	"monitoring-tools/api/internal/db"
+	"monitoring-tools/api/internal/geo"
 	"monitoring-tools/api/internal/httpx"
 	"monitoring-tools/api/internal/ingest"
 	"monitoring-tools/api/internal/sites"
@@ -72,6 +73,17 @@ func run() error {
 	}
 	go siteStore.Run(ctx, time.Minute)
 
+	locator, err := geo.Open(cfg.GeoIPDB)
+	if err != nil {
+		return err
+	}
+	defer locator.Close()
+	if locator.Enabled() {
+		log.Info("location lookup enabled", "db", cfg.GeoIPDB)
+	} else {
+		log.Info("location lookup disabled (GEOIP_DB not set)")
+	}
+
 	// The buffer gets its own context so it can drain after the HTTP server stops.
 	bufCtx, stopBuf := context.WithCancel(context.Background())
 	buf := buffer.New(pool, log, cfg.BatchSize, cfg.FlushInterval)
@@ -84,6 +96,7 @@ func run() error {
 		Sites:      siteStore,
 		Sink:       buf,
 		Enricher:   ingest.NewEnricher(cfg.HashSecret),
+		Geo:        locator,
 		ServerKey:  cfg.ServerKey,
 		TrustProxy: cfg.TrustProxy,
 		Log:        log,

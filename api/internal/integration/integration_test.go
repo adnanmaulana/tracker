@@ -135,6 +135,11 @@ func ev(site, name, path, visitor string, ts time.Time, props string) event.Even
 	}
 }
 
+func inJakarta(e event.Event) event.Event {
+	e.Country, e.Region, e.City = "ID", "Jakarta", "South Jakarta"
+	return e
+}
+
 func TestStatsEndToEnd(t *testing.T) {
 	e := setup(t)
 	today := time.Now().UTC().Truncate(24 * time.Hour)
@@ -145,8 +150,8 @@ func TestStatsEndToEnd(t *testing.T) {
 
 	e.insert(t, []event.Event{
 		// current 7d period
-		ev("portfolio", "pageview", "/", "v1", at(0), ""),
-		ev("portfolio", "pageview", "/projects", "v1", at(0), ""),
+		inJakarta(ev("portfolio", "pageview", "/", "v1", at(0), "")),
+		inJakarta(ev("portfolio", "pageview", "/projects", "v1", at(0), "")),
 		ev("portfolio", "pageview", "/", "v2", at(2), ""),
 		ev("portfolio", "project_click", "/projects", "v1", at(0), `{"project":"cookbook"}`),
 		ev("cookbook", "pageview", "/recipes/swipe", "v3", at(1), ""),
@@ -240,6 +245,44 @@ func TestStatsEndToEnd(t *testing.T) {
 		}
 		if len(names.Rows) != 2 || names.Rows[0].Value != "copy_snippet" || names.Rows[0].Events != 3 {
 			t.Errorf("event names = %+v", names.Rows)
+		}
+	})
+
+	t.Run("cities and visitors", func(t *testing.T) {
+		var cities struct{ Rows []stats.TopRow }
+		e.get(t, "/api/sites/portfolio/stats/top?range=7d&dim=city", &cities)
+		if len(cities.Rows) != 1 || cities.Rows[0].Value != "South Jakarta, ID" || cities.Rows[0].Visitors != 1 {
+			t.Errorf("cities = %+v", cities.Rows)
+		}
+
+		var list struct {
+			Visitors []stats.VisitorRow `json:"visitors"`
+			HasMore  bool               `json:"has_more"`
+		}
+		e.get(t, "/api/sites/portfolio/visitors?range=7d", &list)
+		if len(list.Visitors) != 2 || list.HasMore {
+			t.Fatalf("visitors = %+v", list)
+		}
+		v1 := list.Visitors[0] // most recently seen first
+		if v1.VisitorID != "v1" || v1.Pageviews != 2 || v1.Events != 3 || v1.City != "South Jakarta" || v1.Device != "desktop" {
+			t.Errorf("v1 = %+v", v1)
+		}
+		if v1.Referrer != "https://www.github.com/me" {
+			t.Errorf("v1 referrer = %q", v1.Referrer)
+		}
+
+		var detail struct {
+			Visitor stats.VisitorRow `json:"visitor"`
+			Events  []stats.EventRow `json:"events"`
+		}
+		e.get(t, "/api/sites/portfolio/visitors/v1", &detail)
+		if detail.Visitor.Region != "Jakarta" || len(detail.Events) != 3 || detail.Events[0].City != "South Jakarta" {
+			t.Errorf("detail = %+v", detail)
+		}
+		for i := 1; i < len(detail.Events); i++ {
+			if detail.Events[i].TS.Before(detail.Events[i-1].TS) {
+				t.Error("timeline is not oldest-first")
+			}
 		}
 	})
 

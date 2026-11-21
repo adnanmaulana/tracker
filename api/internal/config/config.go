@@ -19,6 +19,7 @@ type Config struct {
 	BatchSize     int           // flush the buffer when it holds this many events
 	FlushInterval time.Duration // ...or after this long
 	LogLevel      string
+	GeoIPDB       string // path to a MaxMind-format city database; empty disables location lookup
 }
 
 func Load() (Config, error) {
@@ -26,6 +27,7 @@ func Load() (Config, error) {
 		Host:          os.Getenv("HOST"),
 		Port:          env("PORT", "8080"),
 		DatabaseURL:   os.Getenv("DATABASE_URL"),
+		GeoIPDB:       os.Getenv("GEOIP_DB"),
 		HashSecret:    os.Getenv("HASH_SECRET"),
 		ServerKey:     os.Getenv("SERVER_KEY"),
 		APIToken:      os.Getenv("API_TOKEN"),

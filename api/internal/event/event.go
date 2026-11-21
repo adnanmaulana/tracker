@@ -15,6 +15,8 @@ type Event struct {
 	UTMMedium   string
 	UTMCampaign string
 	Country     string
+	Region      string
+	City        string
 	Device      string
 	Browser     string
 	OS          string

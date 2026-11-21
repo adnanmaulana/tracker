@@ -53,6 +53,31 @@ ENV
   echo "Generated secrets in /etc/tracker (dashboard password: grep DASHBOARD_PASSWORD /etc/tracker/web.env)"
 fi
 
+# IP geolocation (DB-IP "IP to City Lite", CC BY 4.0): refreshed monthly, then the API restarts.
+install -d -o tracker -g tracker /var/lib/tracker
+cat > /usr/local/bin/tracker-geoip-update <<'SH'
+#!/usr/bin/env bash
+# Download this month's DB-IP City Lite database (fall back to last month early in the month).
+set -euo pipefail
+dest=/var/lib/tracker/dbip-city-lite.mmdb
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+for m in "$(date -u +%Y-%m)" "$(date -u -d 'last month' +%Y-%m)"; do
+  if curl -fsSL "https://download.db-ip.com/free/dbip-city-lite-$m.mmdb.gz" | gunzip > "$tmp"; then
+    install -o tracker -g tracker -m 644 "$tmp" "$dest"
+    echo "geoip: installed $m"
+    systemctl try-restart tracker-api || true
+    exit 0
+  fi
+done
+echo "geoip: download failed" >&2
+exit 1
+SH
+chmod 755 /usr/local/bin/tracker-geoip-update
+[ -f /var/lib/tracker/dbip-city-lite.mmdb ] || /usr/local/bin/tracker-geoip-update
+echo '15 4 3 * * root /usr/local/bin/tracker-geoip-update >/dev/null' > /etc/cron.d/tracker-geoip
+grep -q '^GEOIP_DB=' /etc/tracker/api.env || echo 'GEOIP_DB=/var/lib/tracker/dbip-city-lite.mmdb' >> /etc/tracker/api.env
+
 # Daily database backup, 14 days kept
 install -d -o postgres -g postgres -m 700 /var/backups/tracker
 cat > /etc/cron.d/tracker-backup <<'CRON'

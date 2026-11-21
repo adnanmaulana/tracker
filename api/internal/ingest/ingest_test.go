@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"monitoring-tools/api/internal/event"
+	"monitoring-tools/api/internal/geo"
 	"monitoring-tools/api/internal/sites"
 )
 
@@ -277,6 +279,60 @@ func TestCollect(t *testing.T) {
 		}
 		if rec := post(h, ev, "", "Bearer secret"); rec.Code != http.StatusAccepted {
 			t.Fatalf("with key: code=%d body=%s", rec.Code, rec.Body)
+		}
+	})
+}
+
+type fakeGeo map[string]geo.Location
+
+func (f fakeGeo) Lookup(ip string) geo.Location { return f[ip] }
+
+func TestCollectLocation(t *testing.T) {
+	const ev = `{"site":"portfolio","name":"pageview","url":"https://me.dev/"}`
+	jakarta := geo.Location{Country: "ID", Region: "Jakarta", City: "South Jakarta"}
+	send := func(h *Handler, country string) event.Event {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/e", strings.NewReader(ev))
+		req.Header.Set("User-Agent", chromeUA)
+		req.Header.Set("Origin", "https://me.dev")
+		if country != "" {
+			req.Header.Set("CF-IPCountry", country)
+		}
+		req.RemoteAddr = "103.10.10.10:4444"
+		rec := httptest.NewRecorder()
+		h.Collect(rec, req)
+		sink := h.Sink.(*fakeSink)
+		if rec.Code != http.StatusAccepted || len(sink.events) != 1 {
+			t.Fatalf("code=%d body=%s", rec.Code, rec.Body)
+		}
+		return sink.events[0]
+	}
+
+	t.Run("fills country, region and city from the IP", func(t *testing.T) {
+		h, _ := newTestHandler("")
+		h.Geo = fakeGeo{"103.10.10.10": jakarta}
+		e := send(h, "")
+		if e.Country != "ID" || e.Region != "Jakarta" || e.City != "South Jakarta" {
+			t.Fatalf("got %q %q %q", e.Country, e.Region, e.City)
+		}
+		if strings.Contains(fmt.Sprintf("%+v", e), "103.10.10.10") {
+			t.Fatal("raw IP leaked into the stored event")
+		}
+	})
+
+	t.Run("edge header wins when it disagrees", func(t *testing.T) {
+		h, _ := newTestHandler("")
+		h.Geo = fakeGeo{"103.10.10.10": jakarta}
+		e := send(h, "SG")
+		if e.Country != "SG" || e.City != "" || e.Region != "" {
+			t.Fatalf("got %q %q %q", e.Country, e.Region, e.City)
+		}
+	})
+
+	t.Run("no geo keeps working", func(t *testing.T) {
+		h, _ := newTestHandler("")
+		if e := send(h, ""); e.Country != "" || e.City != "" {
+			t.Fatalf("got %+v", e)
 		}
 	})
 }

@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 
 import type { RangeId } from "./range";
 import { SESSION_COOKIE, verifySessionToken } from "./session";
-import type { Overview, Site, Summary, Timeseries, Top } from "./types";
+import type { Overview, Site, Summary, Timeseries, Top, VisitorDetail, Visitors } from "./types";
 
 const API_URL = process.env.API_URL ?? "http://localhost:8080";
 export const DASHBOARD_TZ = process.env.DASHBOARD_TZ ?? "UTC";
@@ -53,6 +53,10 @@ export const api = {
   overview: (range: RangeId) => get<Overview>("/api/stats/overview", { range }),
   summary: (id: string, range: RangeId) => get<Summary>(`${site(id)}/stats/summary`, { range }),
   timeseries: (id: string, range: RangeId) => get<Timeseries>(`${site(id)}/stats/timeseries`, { range }),
-  top: (id: string, dim: string, range: RangeId, limit = 8, event?: string) =>
-    get<Top>(`${site(id)}/stats/top`, { range, dim, limit: String(limit), ...(event ? { event } : {}) }),
+  top: (id: string, dim: string, range: RangeId, limit = 8, event?: string, sort: "events" | "visitors" = "events") =>
+    get<Top>(`${site(id)}/stats/top`, { range, dim, sort, limit: String(limit), ...(event ? { event } : {}) }),
+  visitors: (id: string, range: RangeId, page = 1, limit = 50) =>
+    get<Visitors>(`${site(id)}/visitors`, { range, page: String(page), limit: String(limit) }),
+  visitor: (id: string, visitorId: string) =>
+    get<VisitorDetail>(`${site(id)}/visitors/${encodeURIComponent(visitorId)}`),
 };

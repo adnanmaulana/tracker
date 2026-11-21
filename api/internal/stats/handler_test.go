@@ -3,6 +3,7 @@ package stats
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,12 +23,27 @@ func (f *fakeStore) Totals(context.Context, string, Range) (map[string]Period, e
 func (f *fakeStore) Series(context.Context, string, string, Range) (map[string][]Point, error) {
 	return map[string][]Point{}, nil
 }
-func (f *fakeStore) Top(_ context.Context, _, dim, event string, _ Range, _ int) ([]TopRow, error) {
+func (f *fakeStore) Top(_ context.Context, _, dim, event string, _ Range, _ int, _ bool) ([]TopRow, error) {
 	f.lastTop.dim, f.lastTop.event = dim, event
 	return []TopRow{}, nil
 }
 func (f *fakeStore) Events(context.Context, string, string, *Cursor, int) ([]EventRow, error) {
 	return []EventRow{}, nil
+}
+
+func (f *fakeStore) Visitors(_ context.Context, _ string, _ Range, limit, _ int) ([]VisitorRow, error) {
+	out := make([]VisitorRow, 0, limit)
+	for i := 0; i < limit && i < 3; i++ {
+		out = append(out, VisitorRow{VisitorID: fmt.Sprintf("v%d", i)})
+	}
+	return out, nil
+}
+
+func (f *fakeStore) Visitor(_ context.Context, _, id string, _ int) (*VisitorRow, []EventRow, error) {
+	if id != "v0" {
+		return nil, nil, nil
+	}
+	return &VisitorRow{VisitorID: id, City: "Jakarta"}, []EventRow{{Name: "pageview"}}, nil
 }
 
 type fakeRegistry map[string]sites.Site
@@ -90,7 +106,15 @@ func TestAuth(t *testing.T) {
 		{"/api/stats/overview", true, 200},
 		{"/api/sites/portfolio/stats/summary", false, 200}, // public site
 		{"/api/sites/portfolio/stats/top", false, 200},
-		{"/api/sites/portfolio/events", false, 401}, // raw events are never public
+		{"/api/sites/portfolio/events", false, 401},   // raw events are never public
+		{"/api/sites/portfolio/visitors", false, 401}, // nor are visitors
+		{"/api/sites/portfolio/visitors/v0", false, 401},
+		{"/api/sites/portfolio/visitors", true, 200},
+		{"/api/sites/portfolio/visitors/v0", true, 200},
+		{"/api/sites/portfolio/visitors/unknown", true, 404},
+		{"/api/sites/portfolio/visitors/bad%20id", true, 400},
+		{"/api/sites/portfolio/stats/top?sort=visitors", true, 200},
+		{"/api/sites/portfolio/stats/top?sort=nope", true, 400},
 		{"/api/sites/cookbook/stats/summary", false, 401},
 		{"/api/sites/cookbook/stats/summary", true, 200},
 		{"/api/sites/missing/stats/summary", false, 401}, // don't leak existence
@@ -179,5 +203,25 @@ func TestCreateSite(t *testing.T) {
 	}
 	if rec := do(mux, "POST", "/api/sites", `{"id":"x","domain":"x.dev","name":"X"}`, false); rec.Code != 401 {
 		t.Errorf("unauthenticated: %d", rec.Code)
+	}
+}
+
+func TestVisitorsPaging(t *testing.T) {
+	mux, _ := newServer()
+	var res struct {
+		Visitors []VisitorRow `json:"visitors"`
+		HasMore  bool         `json:"has_more"`
+	}
+	rec := do(mux, "GET", "/api/sites/portfolio/visitors?limit=2", "", true)
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err, rec.Body)
+	}
+	if len(res.Visitors) != 2 || !res.HasMore {
+		t.Fatalf("got %d visitors, has_more=%v", len(res.Visitors), res.HasMore)
+	}
+	rec = do(mux, "GET", "/api/sites/portfolio/visitors?limit=5", "", true)
+	_ = json.Unmarshal(rec.Body.Bytes(), &res)
+	if len(res.Visitors) != 3 || res.HasMore {
+		t.Fatalf("got %d visitors, has_more=%v", len(res.Visitors), res.HasMore)
 	}
 }

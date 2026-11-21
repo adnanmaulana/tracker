@@ -60,3 +60,51 @@ export interface Top {
   event: string;
   rows: TopRow[];
 }
+
+/** One anonymous visitor on one day (IDs rotate daily; no IPs are stored). */
+export interface VisitorRow {
+  visitor_id: string;
+  first_seen: string;
+  last_seen: string;
+  pageviews: number;
+  events: number;
+  sessions: number;
+  entry_page?: string;
+  referrer?: string;
+  country?: string;
+  region?: string;
+  city?: string;
+  device?: string;
+  browser?: string;
+  os?: string;
+}
+
+export interface Visitors {
+  range: ResolvedRange;
+  visitors: VisitorRow[];
+  page: number;
+  has_more: boolean;
+}
+
+export interface EventRow {
+  id: number;
+  name: string;
+  ts: string;
+  session_id: string;
+  visitor_id: string;
+  path?: string;
+  referrer?: string;
+  utm_source?: string;
+  country?: string;
+  city?: string;
+  device?: string;
+  browser?: string;
+  os?: string;
+  props: Record<string, unknown>;
+}
+
+export interface VisitorDetail {
+  visitor: VisitorRow;
+  events: EventRow[];
+  truncated: boolean;
+}

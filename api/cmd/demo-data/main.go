@@ -54,9 +54,19 @@ var (
 		{"", 45}, {"https://www.google.com/", 25}, {"https://github.com/", 12},
 		{"https://www.linkedin.com/", 8}, {"https://t.co/", 5}, {"https://news.ycombinator.com/", 3}, {"https://www.reddit.com/", 2},
 	}
-	utms      = []weighted[string]{{"", 88}, {"twitter", 5}, {"newsletter", 4}, {"linkedin", 3}}
-	countries = []weighted[string]{{"ID", 34}, {"US", 20}, {"SG", 8}, {"IN", 7}, {"DE", 6}, {"GB", 5}, {"JP", 4}, {"AU", 3}, {"NL", 3}, {"BR", 2}}
-	devices   = []weighted[[3]string]{
+	utms = []weighted[string]{{"", 88}, {"twitter", 5}, {"newsletter", 4}, {"linkedin", 3}}
+	// country, region, city
+	places = []weighted[[3]string]{
+		{[3]string{"ID", "Jakarta", "South Jakarta"}, 16}, {[3]string{"ID", "West Java", "Bandung"}, 8},
+		{[3]string{"ID", "East Java", "Surabaya"}, 5}, {[3]string{"ID", "Yogyakarta", "Yogyakarta"}, 5},
+		{[3]string{"US", "California", "San Francisco"}, 8}, {[3]string{"US", "New York", "New York"}, 7},
+		{[3]string{"US", "Washington", "Seattle"}, 5}, {[3]string{"SG", "Singapore", "Singapore"}, 8},
+		{[3]string{"IN", "Karnataka", "Bengaluru"}, 7}, {[3]string{"DE", "Berlin", "Berlin"}, 6},
+		{[3]string{"GB", "England", "London"}, 5}, {[3]string{"JP", "Tokyo", "Tokyo"}, 4},
+		{[3]string{"AU", "New South Wales", "Sydney"}, 3}, {[3]string{"NL", "North Holland", "Amsterdam"}, 3},
+		{[3]string{"BR", "São Paulo", "São Paulo"}, 2},
+	}
+	devices = []weighted[[3]string]{
 		{[3]string{"desktop", "Chrome", "macOS"}, 30}, {[3]string{"desktop", "Chrome", "Windows"}, 18},
 		{[3]string{"mobile", "Safari", "iOS"}, 22}, {[3]string{"mobile", "Chrome", "Android"}, 14},
 		{[3]string{"desktop", "Safari", "macOS"}, 8}, {[3]string{"desktop", "Firefox", "Linux"}, 4},
@@ -133,7 +143,7 @@ func main() {
 	}
 
 	r := mrand.New(mrand.NewPCG(42, uint64(now.Unix()/86400)))
-	cols := []string{"site_id", "name", "ts", "session_id", "visitor_id", "path", "referrer", "utm_source", "country", "device", "browser", "os", "props"}
+	cols := []string{"site_id", "name", "ts", "session_id", "visitor_id", "path", "referrer", "utm_source", "country", "region", "city", "device", "browser", "os", "props"}
 
 	for _, s := range sitesToSeed {
 		if _, err := pool.Exec(ctx, `INSERT INTO sites (id, domain, name, is_public) VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO UPDATE SET domain = EXCLUDED.domain, name = EXCLUDED.name`,
@@ -168,19 +178,33 @@ func main() {
 				if ts.After(now) {
 					continue
 				}
-				visitor, session := randID(), randID()
-				ref, utm, country, dev := pick(r, referrers), pick(r, utms), pick(r, countries), pick(r, devices)
-				for p, pages := 0, 1+r.IntN(4); p < pages; p++ {
-					path := pick(r, s.paths)
-					refHere := ""
-					if p == 0 {
-						refHere = ref
+				visitor := randID()
+				ref, utm, place, dev := pick(r, referrers), pick(r, utms), pick(r, places), pick(r, devices)
+				visits := 1
+				if r.Float64() < 0.2 { // some people come back later the same day
+					visits = 2
+				}
+				for vi := 0; vi < visits; vi++ {
+					if vi > 0 {
+						ts = ts.Add(time.Duration(1+r.IntN(4)) * time.Hour)
+						ref = ""
 					}
-					rows = append(rows, []any{s.id, "pageview", ts, session, visitor, path, nullable(refHere), nullable(utm), country, dev[0], dev[1], dev[2], "{}"})
-					if name, props, ok := s.custom(r, path); ok {
-						rows = append(rows, []any{s.id, name, ts.Add(20 * time.Second), session, visitor, path, nil, nil, country, dev[0], dev[1], dev[2], props})
+					if ts.After(now) || ts.Day() != day.Day() {
+						break
 					}
-					ts = ts.Add(time.Duration(30+r.IntN(200)) * time.Second)
+					session := randID()
+					for p, pages := 0, 1+r.IntN(4); p < pages; p++ {
+						path := pick(r, s.paths)
+						refHere := ""
+						if p == 0 {
+							refHere = ref
+						}
+						rows = append(rows, []any{s.id, "pageview", ts, session, visitor, path, nullable(refHere), nullable(utm), place[0], place[1], place[2], dev[0], dev[1], dev[2], "{}"})
+						if name, props, ok := s.custom(r, path); ok {
+							rows = append(rows, []any{s.id, name, ts.Add(20 * time.Second), session, visitor, path, nil, nil, place[0], place[1], place[2], dev[0], dev[1], dev[2], props})
+						}
+						ts = ts.Add(time.Duration(30+r.IntN(200)) * time.Second)
+					}
 				}
 			}
 		}

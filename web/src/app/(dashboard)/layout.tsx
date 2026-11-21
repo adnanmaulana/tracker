@@ -17,6 +17,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <main id="main" className="overflow-x-clip">
         <PendingFrame>{children}</PendingFrame>
       </main>
+      <footer className="wrap border-t border-line py-6 text-[13px] text-muted">
+        Cookie-free analytics. IP geolocation by{" "}
+        <a href="https://db-ip.com" className="underline underline-offset-2 transition-colors hover:text-accent">
+          DB-IP
+        </a>{" "}
+        (CC BY 4.0).
+      </footer>
     </NavigationProvider>
   );
 }

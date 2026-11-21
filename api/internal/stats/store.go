@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -49,10 +50,31 @@ type EventRow struct {
 	UTMMedium   string          `json:"utm_medium,omitempty"`
 	UTMCampaign string          `json:"utm_campaign,omitempty"`
 	Country     string          `json:"country,omitempty"`
+	Region      string          `json:"region,omitempty"`
+	City        string          `json:"city,omitempty"`
 	Device      string          `json:"device,omitempty"`
 	Browser     string          `json:"browser,omitempty"`
 	OS          string          `json:"os,omitempty"`
 	Props       json.RawMessage `json:"props"`
+}
+
+// VisitorRow summarises one anonymous visitor. Visitor IDs rotate daily, so this is
+// "one person on one day", not a person over time.
+type VisitorRow struct {
+	VisitorID string    `json:"visitor_id"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+	Pageviews int64     `json:"pageviews"`
+	Events    int64     `json:"events"`
+	Sessions  int64     `json:"sessions"`
+	EntryPage string    `json:"entry_page,omitempty"`
+	Referrer  string    `json:"referrer,omitempty"`
+	Country   string    `json:"country,omitempty"`
+	Region    string    `json:"region,omitempty"`
+	City      string    `json:"city,omitempty"`
+	Device    string    `json:"device,omitempty"`
+	Browser   string    `json:"browser,omitempty"`
+	OS        string    `json:"os,omitempty"`
 }
 
 // Cursor marks a position in the (ts DESC, id DESC) event feed.
@@ -85,6 +107,7 @@ var dimensions = map[string]string{
 	"utm_medium":   "utm_medium",
 	"utm_campaign": "utm_campaign",
 	"country":      "country",
+	"city":         "city || coalesce(', ' || country, '')", // NULL when city is unknown
 	"device":       "device",
 	"browser":      "browser",
 	"os":           "os",
@@ -210,8 +233,9 @@ func Fill(buckets []time.Time, data map[int64]Point) []Point {
 	return out
 }
 
-// Top ranks values of a dimension. dim must pass ValidDimension.
-func (s *Store) Top(ctx context.Context, site, dim, event string, r Range, limit int) ([]TopRow, error) {
+// Top ranks values of a dimension by event count, or by unique visitors when byVisitors is set.
+// dim must pass ValidDimension.
+func (s *Store) Top(ctx context.Context, site, dim, event string, r Range, limit int, byVisitors bool) ([]TopRow, error) {
 	args := []any{site, r.From, r.To, nullable(event), limit}
 	expr, ok := dimensions[dim]
 	if key, isProp := strings.CutPrefix(dim, "prop:"); isProp {
@@ -222,6 +246,10 @@ func (s *Store) Top(ctx context.Context, site, dim, event string, r Range, limit
 		return nil, fmt.Errorf("invalid dimension %q", dim)
 	}
 
+	order := "2 DESC, 3 DESC, 1"
+	if byVisitors {
+		order = "3 DESC, 2 DESC, 1"
+	}
 	q := fmt.Sprintf(`
 		SELECT %[1]s AS value, count(*) AS events, count(DISTINCT visitor_id) AS visitors
 		FROM events
@@ -229,8 +257,8 @@ func (s *Store) Top(ctx context.Context, site, dim, event string, r Range, limit
 		  AND ($4::text IS NULL OR name = $4)
 		  AND NULLIF(%[1]s, '') IS NOT NULL
 		GROUP BY 1
-		ORDER BY 2 DESC, 1
-		LIMIT $5`, expr)
+		ORDER BY %[2]s
+		LIMIT $5`, expr, order)
 
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -249,6 +277,30 @@ func (s *Store) Top(ctx context.Context, site, dim, event string, r Range, limit
 	return out, rows.Err()
 }
 
+const eventCols = `id, name, ts, session_id, visitor_id,
+	coalesce(path, ''), coalesce(referrer, ''),
+	coalesce(utm_source, ''), coalesce(utm_medium, ''), coalesce(utm_campaign, ''),
+	coalesce(country, ''), coalesce(region, ''), coalesce(city, ''),
+	coalesce(device, ''), coalesce(browser, ''), coalesce(os, ''),
+	props::text`
+
+func scanEvents(rows pgx.Rows) ([]EventRow, error) {
+	defer rows.Close()
+	out := []EventRow{}
+	for rows.Next() {
+		var e EventRow
+		var props string
+		if err := rows.Scan(&e.ID, &e.Name, &e.TS, &e.SessionID, &e.VisitorID,
+			&e.Path, &e.Referrer, &e.UTMSource, &e.UTMMedium, &e.UTMCampaign,
+			&e.Country, &e.Region, &e.City, &e.Device, &e.Browser, &e.OS, &props); err != nil {
+			return nil, err
+		}
+		e.Props = json.RawMessage(props)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // Events returns the newest raw events for a site, older than the cursor if given.
 func (s *Store) Events(ctx context.Context, site, name string, before *Cursor, limit int) ([]EventRow, error) {
 	var beforeTS *time.Time
@@ -257,11 +309,7 @@ func (s *Store) Events(ctx context.Context, site, name string, before *Cursor, l
 		beforeTS, beforeID = &before.TS, before.ID
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, ts, session_id, visitor_id,
-		       coalesce(path, ''), coalesce(referrer, ''),
-		       coalesce(utm_source, ''), coalesce(utm_medium, ''), coalesce(utm_campaign, ''),
-		       coalesce(country, ''), coalesce(device, ''), coalesce(browser, ''), coalesce(os, ''),
-		       props::text
+		SELECT `+eventCols+`
 		FROM events
 		WHERE site_id = $1
 		  AND ($2::text IS NULL OR name = $2)
@@ -272,19 +320,72 @@ func (s *Store) Events(ctx context.Context, site, name string, before *Cursor, l
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	return scanEvents(rows)
+}
 
-	out := []EventRow{}
+// visitorAgg aggregates events into one VisitorRow per visitor_id. Device, browser,
+// OS and location are fixed for a visitor (the ID hashes IP + user agent), so max() is safe.
+const visitorAgg = `
+	SELECT visitor_id, min(ts), max(ts),
+	  count(*) FILTER (WHERE name = 'pageview'), count(*), count(DISTINCT session_id),
+	  coalesce((array_agg(path ORDER BY ts) FILTER (WHERE name = 'pageview' AND path IS NOT NULL))[1], ''),
+	  coalesce((array_agg(referrer ORDER BY ts) FILTER (WHERE referrer IS NOT NULL))[1], ''),
+	  coalesce(max(country), ''), coalesce(max(region), ''), coalesce(max(city), ''),
+	  coalesce(max(device), ''), coalesce(max(browser), ''), coalesce(max(os), '')
+	FROM events`
+
+func scanVisitors(rows pgx.Rows) ([]VisitorRow, error) {
+	defer rows.Close()
+	out := []VisitorRow{}
 	for rows.Next() {
-		var e EventRow
-		var props string
-		if err := rows.Scan(&e.ID, &e.Name, &e.TS, &e.SessionID, &e.VisitorID,
-			&e.Path, &e.Referrer, &e.UTMSource, &e.UTMMedium, &e.UTMCampaign,
-			&e.Country, &e.Device, &e.Browser, &e.OS, &props); err != nil {
+		var v VisitorRow
+		if err := rows.Scan(&v.VisitorID, &v.FirstSeen, &v.LastSeen, &v.Pageviews, &v.Events, &v.Sessions,
+			&v.EntryPage, &v.Referrer, &v.Country, &v.Region, &v.City, &v.Device, &v.Browser, &v.OS); err != nil {
 			return nil, err
 		}
-		e.Props = json.RawMessage(props)
-		out = append(out, e)
+		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// Visitors lists visitors active in the range, most recently seen first.
+func (s *Store) Visitors(ctx context.Context, site string, r Range, limit, offset int) ([]VisitorRow, error) {
+	rows, err := s.pool.Query(ctx, visitorAgg+`
+		WHERE site_id = $1 AND ts >= $2 AND ts < $3
+		GROUP BY visitor_id
+		ORDER BY max(ts) DESC, visitor_id
+		LIMIT $4 OFFSET $5`,
+		site, r.From, r.To, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return scanVisitors(rows)
+}
+
+// Visitor returns one visitor's summary and their events in time order (nil if unknown).
+func (s *Store) Visitor(ctx context.Context, site, id string, limit int) (*VisitorRow, []EventRow, error) {
+	rows, err := s.pool.Query(ctx, visitorAgg+`
+		WHERE site_id = $1 AND visitor_id = $2
+		GROUP BY visitor_id`, site, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	vs, err := scanVisitors(rows)
+	if err != nil || len(vs) == 0 {
+		return nil, nil, err
+	}
+	rows, err = s.pool.Query(ctx, `
+		SELECT `+eventCols+`
+		FROM events
+		WHERE site_id = $1 AND visitor_id = $2
+		ORDER BY ts, id
+		LIMIT $3`, site, id, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	events, err := scanEvents(rows)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &vs[0], events, nil
 }

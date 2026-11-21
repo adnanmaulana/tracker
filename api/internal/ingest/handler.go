@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"monitoring-tools/api/internal/event"
+	"monitoring-tools/api/internal/geo"
 	"monitoring-tools/api/internal/httpx"
 	"monitoring-tools/api/internal/sites"
 )
@@ -17,6 +18,11 @@ import (
 type SiteLookup interface {
 	Get(id string) (sites.Site, bool)
 	AnyDomainMatches(host string) bool
+}
+
+// Geo resolves an IP to a coarse location (implemented by *geo.Locator).
+type Geo interface {
+	Lookup(ip string) geo.Location
 }
 
 type Sink interface {
@@ -27,6 +33,7 @@ type Handler struct {
 	Sites      SiteLookup
 	Sink       Sink
 	Enricher   *Enricher
+	Geo        Geo // optional
 	ServerKey  string
 	TrustProxy bool
 	// AllowLocalhost accepts browser events from localhost for every site (development only).
@@ -84,6 +91,16 @@ func (h *Handler) Collect(w http.ResponseWriter, r *http.Request) {
 		IP:        httpx.ClientIP(r, h.TrustProxy),
 		UserAgent: r.UserAgent(),
 		Country:   countryHeader(r),
+	}
+	if h.Geo != nil {
+		// Only place names are kept; the IP is used for this lookup and the daily hash, then dropped.
+		loc := h.Geo.Lookup(info.IP)
+		info.Region, info.City = loc.Region, loc.City
+		if info.Country == "" || (loc.Country != "" && loc.Country == info.Country) {
+			info.Country = loc.Country
+		} else {
+			info.Region, info.City = "", "" // edge header disagrees; trust it and skip finer detail
+		}
 	}
 
 	var res response

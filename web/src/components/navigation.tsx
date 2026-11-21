@@ -43,6 +43,7 @@ export function RangeControl() {
   const select = (id: RangeId) => {
     if (id === active) return;
     const next = new URLSearchParams(params);
+    next.delete("page"); // a new range starts from the first page
     if (id === DEFAULT_RANGE) next.delete("range");
     else next.set("range", id);
     const qs = next.toString();

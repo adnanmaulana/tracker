@@ -19,6 +19,8 @@ type RequestInfo struct {
 	IP        string
 	UserAgent string
 	Country   string
+	Region    string
+	City      string
 }
 
 type Enricher struct {
@@ -42,6 +44,8 @@ func (en *Enricher) Build(raw RawEvent, info RequestInfo) event.Event {
 		TS:        clampTS(raw.TS, now),
 		VisitorID: en.visitorID(raw.Site, info.IP, info.UserAgent, now),
 		Country:   strings.ToUpper(info.Country),
+		Region:    info.Region,
+		City:      info.City,
 		Device:    deviceType(ua),
 		Browser:   ua.Name,
 		OS:        ua.OS,
